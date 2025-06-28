@@ -11,17 +11,41 @@ import io
 import base64
 from datetime import datetime, timedelta
 import warnings
-import sys  # Add this import
+import sys
+import os
+from pathlib import Path
 
 warnings.filterwarnings('ignore')
 
 # Configure page
 st.set_page_config(
     page_title="EEG Seizure Detection System",
-    page_icon="C:/Users/Aadit/PycharmProjects/STREAMMMLIT/logo.png",  # Or whatever the file extension is
+    page_icon="🧠",  # Using emoji instead of file path for cloud deployment
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Function to load logo safely
+def load_logo():
+    """Load logo with fallback for cloud deployment"""
+    try:
+        # Try different possible paths
+        logo_paths = [
+            "assets/logo.png",
+            "logo.png",
+            "assets/logo.jpg",
+            "logo.jpg"
+        ]
+        
+        for path in logo_paths:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    return base64.b64encode(f.read()).decode()
+        
+        # If no logo found, return empty string
+        return ""
+    except Exception:
+        return ""
 
 # Custom CSS for medical theme
 st.markdown("""
@@ -72,7 +96,7 @@ st.markdown("""
         border-radius: 5px;
     }
     
-       @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap');
     
     .main-header {
         font-size: 2.5rem;
@@ -100,8 +124,11 @@ class EEGSeizureDetector:
     def load_model_components(self, model_path):
         """Load the trained model and preprocessors"""
         try:
+            # Check if model file exists
+            if not os.path.exists(model_path):
+                return False, f"Model file not found: {model_path}"
+
             # Extract directory from model path
-            import os
             model_dir = os.path.dirname(model_path)
 
             # Load model
@@ -185,22 +212,29 @@ def load_detector():
 
 detector = load_detector()
 
-# Header
-# st.markdown('<div class="main-header">🧠 EEG Seizure Detection System</div>', unsafe_allow_html=True)
-# Header with logo and fancy font
 # Header with logo and classy font
-st.markdown("""
-<div class="main-header" style="background: white;">
-    <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
-        <img src="data:image/png;base64,{}" style="width: 100px; height: 100px; object-fit: contain;">
-        <span style="font-family: 'Cinzel', 'Times New Roman', serif; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; text-shadow: 1px 1px 3px rgba(0,0,0,0.2);">EEG Seizure Detection System</span>
-    </div>
-</div>
-""".format(
-    #base64.b64encode(open("C:/Users/Aadit/PycharmProjects/STREAMMMLIT/logo.png", "rb").read()).decode()
-base64.b64encode(open("assets/logo.png", "rb").read()).decode()
+logo_base64 = load_logo()
 
-), unsafe_allow_html=True)
+if logo_base64:
+    st.markdown(f"""
+    <div class="main-header" style="background: white;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
+            <img src="data:image/png;base64,{logo_base64}" style="width: 100px; height: 100px; object-fit: contain;">
+            <span style="font-family: 'Cinzel', 'Times New Roman', serif; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; text-shadow: 1px 1px 3px rgba(0,0,0,0.2);">EEG Seizure Detection System</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    # Fallback header without logo
+    st.markdown("""
+    <div class="main-header" style="background: white;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
+            <span style="font-size: 3rem;">🧠</span>
+            <span style="font-family: 'Cinzel', 'Times New Roman', serif; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; text-shadow: 1px 1px 3px rgba(0,0,0,0.2);">EEG Seizure Detection System</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 # Sidebar
 with st.sidebar:
     st.markdown("### 🔧 System Configuration")
@@ -208,9 +242,22 @@ with st.sidebar:
     # Model loading section
     st.markdown("#### Model Loading")
 
-    # Default model path
-    #default_model_path = r"C:\Users\Aadit\Model\EEG CNN Model\eeg_cnn_model.h5"
-    default_model_path = "model/eeg_cnn_model.h5"
+    # Default model path - check multiple possible locations
+    possible_model_paths = [
+        "model/eeg_cnn_model.h5",
+        "models/eeg_cnn_model.h5",
+        "eeg_cnn_model.h5",
+        "assets/eeg_cnn_model.h5"
+    ]
+    
+    default_model_path = None
+    for path in possible_model_paths:
+        if os.path.exists(path):
+            default_model_path = path
+            break
+    
+    if default_model_path is None:
+        default_model_path = "model/eeg_cnn_model.h5"
 
     model_path = st.text_input(
         "Model Path:",
@@ -603,7 +650,7 @@ with tab4:
     # System information
     st.markdown("#### 💻 System Information")
     st.write(f"**TensorFlow Version:** {tf.__version__}")
-    st.write(f"**Python Version:** {sys.version}")  # Fixed this line
+    st.write(f"**Python Version:** {sys.version}")
     st.write(f"**Current Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Usage instructions
