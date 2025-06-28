@@ -287,8 +287,8 @@ with st.sidebar:
 
     # Default model path - check multiple possible locations
     possible_model_paths = [
-        "model/eeg_cnn_model.h5",
-        "models/eeg_cnn_model.h5", 
+        "Model/eeg_cnn_model.h5",
+        "Models/eeg_cnn_model.h5", 
         "eeg_cnn_model.h5",
         "assets/eeg_cnn_model.h5"
     ]
