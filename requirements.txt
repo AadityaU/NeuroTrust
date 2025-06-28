@@ -1,0 +1,22 @@
+# Core Streamlit and web framework
+streamlit==1.46.1
+
+# Data processing
+pandas==2.3.0
+numpy==1.24.4
+
+# Machine Learning
+tensorflow==2.15.0
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# Visualization
+plotly==5.22.0
+matplotlib==3.10.3
+
+# Image processing
+Pillow==11.2.1
+
+# Additional dependencies for TensorFlow
+h5py==3.14.0
+protobuf==4.25.8
