@@ -1,12 +1,13 @@
-# Core Streamlit and web framework
+# Streamlit
 streamlit==1.46.1
 
 # Data processing
 pandas==2.3.0
-numpy==1.26.4  # Compatible with pandas 2.3.0
+numpy==1.26.4
 
 # Machine Learning
 tensorflow==2.15.0
+keras==2.13.1         # ✅ Crucial: match your model version
 scikit-learn==1.5.2
 joblib==1.4.2
 
@@ -17,7 +18,7 @@ matplotlib==3.10.3
 # Image processing
 Pillow==11.2.1
 
-# Additional dependencies
+# Compatibility
 h5py==3.14.0
 protobuf==4.25.8
-setuptools>=69.5.1
+setuptools==69.5.1
