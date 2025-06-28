@@ -15,13 +15,12 @@ import sys
 import os
 from pathlib import Path
 
-
 warnings.filterwarnings('ignore')
 
 # Configure page
 st.set_page_config(
     page_title="EEG Seizure Detection System",
-    page_icon="🧠",  # Using emoji instead of file path for cloud deployment
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -30,10 +29,9 @@ st.set_page_config(
 def load_logo():
     """Load logo with fallback for cloud deployment"""
     try:
-        # Try different possible paths
         logo_paths = [
             "assets/logo.png",
-            "logo.png",
+            "logo.png", 
             "assets/logo.jpg",
             "logo.jpg"
         ]
@@ -42,8 +40,6 @@ def load_logo():
             if os.path.exists(path):
                 with open(path, "rb") as f:
                     return base64.b64encode(f.read()).decode()
-        
-        # If no logo found, return empty string
         return ""
     except Exception:
         return ""
@@ -96,24 +92,10 @@ st.markdown("""
         padding: 1rem;
         border-radius: 5px;
     }
-    
+
     @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&display=swap');
-    
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f4e79;
-        text-align: center;
-        margin-bottom: 2rem;
-        padding: 1rem;
-        background: linear-gradient(90deg, #f0f8ff, #e6f3ff);
-        border-radius: 10px;
-        border-left: 5px solid #1f4e79;
-    }
-    
 </style>
 """, unsafe_allow_html=True)
-
 
 class EEGSeizureDetector:
     def __init__(self):
@@ -123,26 +105,48 @@ class EEGSeizureDetector:
         self.model_loaded = False
 
     def load_model_components(self, model_path):
-        """Load the trained model and preprocessors"""
+        """Load the trained model and preprocessors with better error handling"""
         try:
             # Check if model file exists
             if not os.path.exists(model_path):
                 return False, f"Model file not found: {model_path}"
 
             # Extract directory from model path
-            model_dir = os.path.dirname(model_path)
+            model_dir = os.path.dirname(model_path) if os.path.dirname(model_path) else "."
 
-            # Load model
-            self.model = load_model(model_path)
+            # Load model with custom objects and compile=False to avoid version issues
+            try:
+                self.model = load_model(model_path, compile=False)
+                # Recompile with current TensorFlow version
+                self.model.compile(
+                    optimizer='adam',
+                    loss='binary_crossentropy',
+                    metrics=['accuracy']
+                )
+            except Exception as model_error:
+                # Try alternative loading methods
+                try:
+                    # Method 2: Load without compilation
+                    self.model = tf.keras.models.load_model(model_path, compile=False)
+                    self.model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+                except Exception:
+                    return False, f"Model loading failed. Error: {str(model_error)}"
 
-            # Load preprocessors
+            # Load preprocessors if they exist
             scaler_path = os.path.join(model_dir, "scaler.joblib")
             encoder_path = os.path.join(model_dir, "label_encoder.joblib")
 
             if os.path.exists(scaler_path):
-                self.scaler = joblib.load(scaler_path)
+                try:
+                    self.scaler = joblib.load(scaler_path)
+                except Exception as e:
+                    st.warning(f"Could not load scaler: {e}. Will use basic normalization.")
+                    
             if os.path.exists(encoder_path):
-                self.label_encoder = joblib.load(encoder_path)
+                try:
+                    self.label_encoder = joblib.load(encoder_path)
+                except Exception as e:
+                    st.warning(f"Could not load label encoder: {e}. Will use default labels.")
 
             self.model_loaded = True
             return True, "Model loaded successfully!"
@@ -151,18 +155,44 @@ class EEGSeizureDetector:
             return False, f"Error loading model: {str(e)}"
 
     def preprocess_data(self, data):
-        """Preprocess the input data for prediction"""
+        """Preprocess the input data for prediction with robust handling"""
         try:
+            # Ensure data is numeric
+            if isinstance(data, pd.DataFrame):
+                data = data.select_dtypes(include=[np.number]).values
+            
+            # Handle NaN values
+            if np.isnan(data).any():
+                data = np.nan_to_num(data, nan=0.0)
+            
             # Apply scaling if scaler is available
             if self.scaler is not None:
-                data_scaled = self.scaler.transform(data)
+                try:
+                    data_scaled = self.scaler.transform(data)
+                except Exception as e:
+                    st.warning(f"Scaler failed: {e}. Using basic normalization.")
+                    # Fallback to basic normalization
+                    data_scaled = (data - np.mean(data, axis=0)) / (np.std(data, axis=0) + 1e-8)
             else:
                 # Basic normalization if no scaler
                 data_scaled = (data - np.mean(data, axis=0)) / (np.std(data, axis=0) + 1e-8)
 
-            # Reshape for CNN (samples, timesteps, features)
-            if len(data_scaled.shape) == 2:
-                data_reshaped = data_scaled.reshape(data_scaled.shape[0], 1, data_scaled.shape[1])
+            # Determine the expected input shape from the model
+            expected_shape = self.model.input_shape
+            
+            # Reshape data based on model's expected input
+            if len(expected_shape) == 3:  # (batch_size, timesteps, features)
+                if len(data_scaled.shape) == 2:
+                    # Reshape (samples, features) to (samples, 1, features)
+                    data_reshaped = data_scaled.reshape(data_scaled.shape[0], 1, data_scaled.shape[1])
+                else:
+                    data_reshaped = data_scaled
+            elif len(expected_shape) == 2:  # (batch_size, features)
+                if len(data_scaled.shape) == 3:
+                    # Flatten if needed
+                    data_reshaped = data_scaled.reshape(data_scaled.shape[0], -1)
+                else:
+                    data_reshaped = data_scaled
             else:
                 data_reshaped = data_scaled
 
@@ -172,30 +202,47 @@ class EEGSeizureDetector:
             return None, False, f"Error preprocessing data: {str(e)}"
 
     def predict(self, data):
-        """Make predictions on the preprocessed data"""
+        """Make predictions on the preprocessed data with robust error handling"""
         try:
             if not self.model_loaded:
-                return None, None, False, "Model not loaded"
+                return None, None, None, False, "Model not loaded"
 
             # Preprocess data
             processed_data, success, message = self.preprocess_data(data)
             if not success:
-                return None, None, False, message
+                return None, None, None, False, message
 
-            # Make predictions
-            predictions_proba = self.model.predict(processed_data, verbose=0)
+            # Make predictions with error handling
+            try:
+                predictions_proba = self.model.predict(processed_data, verbose=0)
+            except Exception as pred_error:
+                return None, None, None, False, f"Prediction failed: {str(pred_error)}"
 
-            # Convert probabilities to class predictions
-            if predictions_proba.shape[1] == 2:  # Binary classification
-                predictions = (predictions_proba[:, 1] > 0.5).astype(int)
+            # Handle different prediction output formats
+            if len(predictions_proba.shape) == 1:
+                # Single output
+                predictions = (predictions_proba > 0.5).astype(int)
+                confidence = np.abs(predictions_proba - 0.5) + 0.5
+            elif predictions_proba.shape[1] == 1:
+                # Single sigmoid output
+                predictions = (predictions_proba[:, 0] > 0.5).astype(int)
+                confidence = np.maximum(predictions_proba[:, 0], 1 - predictions_proba[:, 0])
+            elif predictions_proba.shape[1] == 2:
+                # Binary classification with 2 outputs
+                predictions = np.argmax(predictions_proba, axis=1)
                 confidence = np.max(predictions_proba, axis=1)
             else:
+                # Multi-class
                 predictions = np.argmax(predictions_proba, axis=1)
                 confidence = np.max(predictions_proba, axis=1)
 
-            # Convert to labels if label encoder is available
+            # Convert to labels
             if self.label_encoder is not None:
-                labels = self.label_encoder.inverse_transform(predictions)
+                try:
+                    labels = self.label_encoder.inverse_transform(predictions)
+                except Exception:
+                    # Fallback if label encoder fails
+                    labels = ['High Risk' if p == 1 else 'Low Risk' for p in predictions]
             else:
                 labels = ['High Risk' if p == 1 else 'Low Risk' for p in predictions]
 
@@ -204,12 +251,10 @@ class EEGSeizureDetector:
         except Exception as e:
             return None, None, None, False, f"Error making predictions: {str(e)}"
 
-
 # Initialize the detector
 @st.cache_resource
 def load_detector():
     return EEGSeizureDetector()
-
 
 detector = load_detector()
 
@@ -226,7 +271,6 @@ if logo_base64:
     </div>
     """, unsafe_allow_html=True)
 else:
-    # Fallback header without logo
     st.markdown("""
     <div class="main-header" style="background: white;">
         <div style="display: flex; align-items: center; justify-content: center; gap: 15px;">
@@ -239,24 +283,22 @@ else:
 # Sidebar
 with st.sidebar:
     st.markdown("### 🔧 System Configuration")
-
-    # Model loading section
     st.markdown("#### Model Loading")
 
     # Default model path - check multiple possible locations
     possible_model_paths = [
         "model/eeg_cnn_model.h5",
-        "models/eeg_cnn_model.h5",
+        "models/eeg_cnn_model.h5", 
         "eeg_cnn_model.h5",
         "assets/eeg_cnn_model.h5"
     ]
-    
+
     default_model_path = None
     for path in possible_model_paths:
         if os.path.exists(path):
             default_model_path = path
             break
-    
+
     if default_model_path is None:
         default_model_path = "model/eeg_cnn_model.h5"
 
@@ -298,13 +340,17 @@ with st.sidebar:
     st.markdown("- **High Risk**: Seizure detected")
     st.markdown("- **Low Risk**: Normal activity")
 
+    # Debug info
+    st.markdown("#### 🔧 Debug Info")
+    st.write(f"TensorFlow: {tf.__version__}")
+    st.write(f"Python: {sys.version_info.major}.{sys.version_info.minor}")
+
 # Main content
 tab1, tab2, tab3, tab4 = st.tabs(["🔍 Prediction", "📊 Analytics", "📈 Visualization", "📋 Model Info"])
 
 with tab1:
     st.markdown("### 🔍 EEG Seizure Risk Prediction")
 
-    # File upload
     uploaded_file = st.file_uploader(
         "Upload Preprocessed EEG Data (CSV)",
         type=['csv'],
@@ -313,25 +359,29 @@ with tab1:
 
     if uploaded_file is not None:
         try:
-            # Load data
+            # Load data with better error handling
             data = pd.read_csv(uploaded_file)
-
+            
+            # Remove any non-numeric columns
+            numeric_data = data.select_dtypes(include=[np.number])
+            if numeric_data.empty:
+                st.error("❌ No numeric data found in the uploaded file!")
+                st.stop()
+            
             # Display data info
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Samples", data.shape[0])
+                st.metric("Total Samples", numeric_data.shape[0])
             with col2:
-                st.metric("Features", data.shape[1])
+                st.metric("Features", numeric_data.shape[1])
             with col3:
                 st.metric("File Size", f"{uploaded_file.size / 1024:.1f} KB")
 
             # Data preview
             with st.expander("📋 Data Preview"):
-                st.dataframe(data.head(10))
-
-                # Basic statistics
+                st.dataframe(numeric_data.head(10))
                 st.markdown("**Data Statistics:**")
-                st.dataframe(data.describe())
+                st.dataframe(numeric_data.describe())
 
             # Prediction section
             if st.button("🚀 Run Seizure Detection", type="primary"):
@@ -339,11 +389,9 @@ with tab1:
                     st.error("❌ Please load the model first!")
                 else:
                     with st.spinner("Analyzing EEG data..."):
-                        # Make predictions
-                        predictions, labels, confidence, success, message = detector.predict(data.values)
+                        predictions, labels, confidence, success, message = detector.predict(numeric_data.values)
 
                         if success:
-                            # Results summary
                             st.success("✅ Analysis Complete!")
 
                             # Calculate metrics
@@ -394,7 +442,6 @@ with tab1:
                             # Detailed results
                             st.markdown("### 📋 Detailed Results")
 
-                            # Create results dataframe
                             results_df = pd.DataFrame({
                                 'Segment': range(1, len(labels) + 1),
                                 'Time_Window': [f"{i * 4}-{(i + 1) * 4}s" for i in range(len(labels))],
@@ -403,7 +450,6 @@ with tab1:
                                 'Risk_Level': ['🚨 HIGH' if 'High' in str(label) else '✅ LOW' for label in labels]
                             })
 
-                            # Display with filtering
                             filter_option = st.selectbox(
                                 "Filter Results:",
                                 ["All Segments", "High Risk Only", "Low Risk Only"]
@@ -430,7 +476,7 @@ with tab1:
                                 mime="text/csv"
                             )
 
-                            # Store results in session state for other tabs
+                            # Store results in session state
                             st.session_state.results_df = results_df
                             st.session_state.predictions = predictions
                             st.session_state.confidence = confidence
@@ -441,6 +487,7 @@ with tab1:
 
         except Exception as e:
             st.error(f"❌ Error loading data: {str(e)}")
+            st.info("Please ensure your CSV file contains only numeric data.")
 
 with tab2:
     st.markdown("### 📊 Advanced Analytics")
@@ -448,7 +495,6 @@ with tab2:
     if 'results_df' in st.session_state:
         results_df = st.session_state.results_df
 
-        # Risk distribution
         col1, col2 = st.columns(2)
 
         with col1:
@@ -462,7 +508,6 @@ with tab2:
             st.plotly_chart(fig_pie, use_container_width=True)
 
         with col2:
-            # Confidence distribution
             confidence_values = [float(c.strip('%')) / 100 for c in results_df['Confidence']]
             fig_hist = px.histogram(
                 x=confidence_values,
@@ -474,8 +519,6 @@ with tab2:
 
         # Timeline analysis
         st.markdown("#### 📈 Risk Timeline")
-
-        # Create timeline data
         timeline_data = []
         for idx, row in results_df.iterrows():
             timeline_data.append({
@@ -499,7 +542,6 @@ with tab2:
 
         # Statistical summary
         st.markdown("#### 📋 Statistical Summary")
-
         col1, col2 = st.columns(2)
 
         with col1:
@@ -520,7 +562,6 @@ with tab2:
             st.write(f"- Max confidence: {np.max(confidence):.1%}")
             st.write(f"- Std deviation: {np.std(confidence):.1%}")
 
-            # Risk level recommendation
             if risk_percentage > 20:
                 st.error("⚠️ **HIGH ALERT**: Significant seizure activity detected!")
             elif risk_percentage > 10:
@@ -539,18 +580,13 @@ with tab3:
 
         # Heatmap of risk over time
         st.markdown("#### 🔥 Risk Heatmap")
-
-        # Create risk matrix (reshape data into a grid)
         segments_per_row = 10
         total_segments = len(results_df)
-        rows_needed = (total_segments + segments_per_row - 1) // segments_per_row
 
-        # Pad data to fill complete grid
         risk_values = [1 if risk == '🚨 HIGH' else 0 for risk in results_df['Risk_Level']]
         while len(risk_values) % segments_per_row != 0:
             risk_values.append(0)
 
-        # Reshape into matrix
         risk_matrix = np.array(risk_values).reshape(-1, segments_per_row)
 
         fig_heatmap = px.imshow(
@@ -567,8 +603,6 @@ with tab3:
 
         # 3D visualization
         st.markdown("#### 🌐 3D Risk Landscape")
-
-        # Create 3D surface
         x = np.arange(len(results_df))
         y = [1 if risk == '🚨 HIGH' else 0 for risk in results_df['Risk_Level']]
         z = [float(c.strip('%')) / 100 for c in results_df['Confidence']]
@@ -602,7 +636,6 @@ with tab3:
 
         # Confidence vs Risk scatter
         st.markdown("#### 🎯 Confidence vs Risk Analysis")
-
         confidence_numeric = [float(c.strip('%')) / 100 for c in results_df['Confidence']]
         risk_numeric = [1 if risk == '🚨 HIGH' else 0 for risk in results_df['Risk_Level']]
 
@@ -628,7 +661,6 @@ with tab4:
         with col1:
             st.markdown("#### 🤖 Model Architecture")
             if detector.model is not None:
-                # Model summary
                 model_summary = []
                 detector.model.summary(print_fn=lambda x: model_summary.append(x))
                 st.text('\n'.join(model_summary))
@@ -640,7 +672,6 @@ with tab4:
                 st.write(f"**Input Shape:** {detector.model.input_shape}")
                 st.write(f"**Output Shape:** {detector.model.output_shape}")
 
-                # Layer information
                 st.markdown("**Layer Information:**")
                 for i, layer in enumerate(detector.model.layers):
                     st.write(f"- Layer {i + 1}: {layer.__class__.__name__}")
@@ -668,6 +699,11 @@ with tab4:
     - Each row represents a 4-second EEG window
     - Features should match the training data format
     - No headers required (will be ignored if present)
+    
+    **Troubleshooting:**
+    - If model loading fails, check TensorFlow version compatibility
+    - Ensure model file path is correct
+    - Use only numeric data in CSV files
     """)
 
 # Footer
@@ -675,7 +711,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666; padding: 1rem;">
-        🧠 EEG Seizure Detection System v1.0 | 
+        🧠 EEG Seizure Detection System v1.1 | 
         Built with Streamlit & TensorFlow | 
         For Medical Research Use
     </div>
