@@ -3,7 +3,7 @@ streamlit==1.46.1
 
 # Data processing
 pandas==2.3.0
-numpy==1.26.4  # ✅ Updated to be compatible with pandas 2.3.0
+numpy==1.26.4  # Compatible with pandas 2.3.0
 
 # Machine Learning
 tensorflow==2.15.0
@@ -17,9 +17,7 @@ matplotlib==3.10.3
 # Image processing
 Pillow==11.2.1
 
-# Additional dependencies for TensorFlow
+# Additional dependencies
 h5py==3.14.0
 protobuf==4.25.8
-
-# Required for building packages in Python 3.12+
-setuptools>=69.5.1  # ✅ Ensures distutils compatibility for Python 3.13
+setuptools>=69.5.1
